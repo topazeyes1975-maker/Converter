@@ -3,71 +3,127 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OBJ to GLB Converter</title>
+  <title>GLB 3D Model Compressor</title>
   <style>
-    body { font-family: sans-serif; padding: 20px; background: #121212; color: #fff; }
-    input, button { margin: 10px 0; padding: 10px; font-size: 16px; }
-    button { background: #007acc; color: white; border: none; cursor: pointer; borderRadius: 4px; }
+    body { font-family: Arial, sans-serif; padding: 20px; background: #121212; color: #fff; text-align: center; }
+    .card { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 400px; margin: 0 auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+    input, select, button { margin: 10px 0; padding: 12px; width: 90%; font-size: 15px; border-radius: 4px; border: none; }
+    button { background: #007acc; color: white; font-weight: bold; cursor: pointer; }
+    button:disabled { background: #444; }
+    #status { margin-top: 15px; font-size: 14px; color: #00ffcc; word-break: break-all; }
   </style>
-  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.160.0/examples/jsm/loaders/OBJLoader.js"></script>
-  <script src="https://unpkg.com/three@0.160.0/examples/jsm/exporters/GLTFExporter.js"></script>
+
+  <!-- Import Three.js Core and Modules -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
 </head>
 <body>
 
-  <h2>Local OBJ to GLB Converter</h2>
-  <input type="file" id="fileInput" accept=".obj">
-  <br>
-  <button id="convertBtn">Convert to GLB</button>
-  <p id="status"></p>
+  <div class="card">
+    <h2>GLB Web Compressor</h2>
+    <input type="file" id="fileInput" accept=".glb,.gltf,.obj">
+    
+    <label for="ratio">Target Mesh Quality:</label>
+    <select id="ratio">
+      <option value="0.5">Medium (50% Mesh Reduction)</option>
+      <option value="0.25" selected>Aggressive (75% Mesh Reduction)</option>
+      <option value="0.10">Extreme (90% Mesh Reduction)</option>
+    </select>
+
+    <button id="convertBtn">Compress & Download GLB</button>
+    <div id="status">Select a file to begin</div>
+  </div>
 
   <script type="module">
-    import { OBJLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/OBJLoader.js';
-    import { GLTFExporter } from 'https://unpkg.com/three@0.160.0/examples/jsm/exporters/GLTFExporter.js';
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+    import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+    import { SimplifyModifier } from 'three/addons/modifiers/SimplifyModifier.js';
 
     const fileInput = document.getElementById('fileInput');
     const convertBtn = document.getElementById('convertBtn');
     const status = document.getElementById('status');
+    const ratioSelect = document.getElementById('ratio');
 
-    convertBtn.addEventListener('click', () => {
+    convertBtn.addEventListener('click', async () => {
       const file = fileInput.files[0];
       if (!file) {
-        status.textContent = "Please select an .obj file first!";
+        status.textContent = "Please select a file first!";
         return;
       }
 
-      status.textContent = "Reading file...";
+      convertBtn.disabled = true;
+      status.textContent = "Loading file into browser memory...";
+
       const reader = new FileReader();
+      const extension = file.name.split('.').pop().toLowerCase();
 
-      reader.onload = function (e) {
+      reader.onload = async function (e) {
         try {
-          status.textContent = "Parsing OBJ mesh...";
-          const loader = new OBJLoader();
-          const object = loader.parse(e.target.result);
+          let targetObject;
 
-          status.textContent = "Exporting to GLB...";
+          if (extension === 'glb' || extension === 'gltf') {
+            const loader = new GLTFLoader();
+            const gltf = await loader.parseAsync(e.target.result, '');
+            targetObject = gltf.scene;
+          } else if (extension === 'obj') {
+            const loader = new OBJLoader();
+            const text = new TextDecoder().decode(e.target.result);
+            targetObject = loader.parse(text);
+          }
+
+          status.textContent = "Simplifying geometry & reducing mesh size...";
+          const modifier = new SimplifyModifier();
+          const targetRatio = parseFloat(ratioSelect.value);
+
+          // Iterate through all sub-meshes and simplify polygon counts
+          targetObject.traverse((child) => {
+            if (child.isMesh && child.geometry) {
+              const originalCount = child.geometry.attributes.position.count;
+              const targetCount = Math.floor(originalCount * targetRatio);
+              if (targetCount > 10) {
+                child.geometry = modifier.modify(child.geometry, targetCount);
+              }
+            }
+          });
+
+          status.textContent = "Compiling compressed GLB binary...";
           const exporter = new GLTFExporter();
+
           exporter.parse(
-            object,
+            targetObject,
             function (glb) {
               const blob = new Blob([glb], { type: 'application/octet-stream' });
               const link = document.createElement('a');
               link.href = URL.createObjectURL(blob);
-              link.download = file.name.replace(/\.[^/.]+$/, "") + ".glb";
+              link.download = file.name.replace(/\.[^/.]+$/, "") + "_compressed.glb";
               link.click();
-              status.textContent = "Done! Download started.";
+              
+              const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
+              status.textContent = `Success! Output file size: ${sizeMB} MB`;
+              convertBtn.disabled = false;
             },
             function (error) {
               status.textContent = "Export failed: " + error;
+              convertBtn.disabled = false;
             },
             { binary: true }
           );
+
         } catch (err) {
           status.textContent = "Error processing model: " + err.message;
+          convertBtn.disabled = false;
         }
       };
 
-      reader.readAsText(file);
+      reader.readAsArrayBuffer(file);
     });
   </script>
 
