@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GLB Fast Converter & Draco Optimizer</title>
+  <title>GLB Fast Converter & Real Mesh Compressor</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; background: #121212; color: #fff; text-align: center; margin: 0; }
     .card { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 450px; margin: 20px auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-    input, button { margin: 10px 0; padding: 12px; width: 90%; font-size: 15px; border-radius: 4px; border: none; box-sizing: border-box; }
+    input, button, select { margin: 10px 0; padding: 12px; width: 90%; font-size: 15px; border-radius: 4px; border: none; box-sizing: border-box; }
+    select { background: #2a2a2a; color: #fff; border: 1px solid #444; }
     button { background: #007acc; color: white; font-weight: bold; cursor: pointer; }
     button:disabled { background: #444; cursor: not-allowed; }
+    .option-group { text-align: left; width: 90%; margin: 10px auto; font-size: 13px; color: #bbb; }
     
-    /* Progress Indicator & Spinner */
     #progressContainer { display: none; margin: 15px 0; }
     .spinner { border: 4px solid #333; border-top: 4px solid #00ffcc; border-radius: 50%; width: 36px; height: 36px; animation: spin 1s linear infinite; margin: 10px auto; }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -25,7 +26,8 @@
     {
       "imports": {
         "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+        "meshoptimizer": "https://unpkg.com/meshoptimizer@0.20.0/meshopt_simplifier.module.js"
       }
     }
   </script>
@@ -33,9 +35,20 @@
 <body>
 
   <div class="card">
-    <h2>GLB Fast Converter</h2>
+    <h2>GLB Fast Optimizer</h2>
+    
     <input type="file" id="fileInput" accept=".glb,.gltf,.obj">
-    <button id="convertBtn">Process & Export Compressed GLB</button>
+    
+    <div class="option-group">
+      <label for="reductionRatio">Target Mesh Density:</label>
+      <select id="reductionRatio">
+        <option value="0.3" selected>Target ~25 MB (Reduce to 30% detail)</option>
+        <option value="0.15">Aggressive (~10–15 MB / 15% detail)</option>
+        <option value="0.5">Moderate (~40 MB / 50% detail)</option>
+      </select>
+    </div>
+
+    <button id="convertBtn">Optimize & Shrink GLB</button>
     
     <div id="progressContainer">
       <div class="spinner"></div>
@@ -50,10 +63,11 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
     import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-    import { DRACOExporter } from 'three/addons/exporters/DRACOExporter.js';
+    import { MeshoptSimplifier } from 'meshoptimizer';
 
     const fileInput = document.getElementById('fileInput');
     const convertBtn = document.getElementById('convertBtn');
+    const reductionRatio = document.getElementById('reductionRatio');
     const status = document.getElementById('status');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
@@ -65,6 +79,41 @@
         progressBar.style.display = 'block';
         progressFill.style.width = percent + '%';
       }
+    }
+
+    async function simplifyScene(scene, ratio) {
+      await MeshoptSimplifier.ready;
+      
+      let promises = [];
+      scene.traverse((child) => {
+        if (child.isMesh && child.geometry) {
+          const geom = child.geometry.toNonIndexed();
+          const pos = geom.attributes.position.array;
+          const targetIndexCount = Math.floor((pos.length / 3) * ratio);
+
+          if (targetIndexCount > 100) {
+            const [resIndices] = MeshoptSimplifier.simplify(
+              pos,
+              targetIndexCount,
+              0.01 // Target error tolerance
+            );
+
+            const simplifiedGeom = new THREE.BufferGeometry();
+            simplifiedGeom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            simplifiedGeom.setIndex(new THREE.BufferAttribute(resIndices, 1));
+            
+            if (geom.attributes.normal) {
+              simplifiedGeom.setAttribute('normal', geom.attributes.normal);
+            }
+            if (geom.attributes.uv) {
+              simplifiedGeom.setAttribute('uv', geom.attributes.uv);
+            }
+
+            child.geometry.dispose();
+            child.geometry = simplifiedGeom;
+          }
+        }
+      });
     }
 
     convertBtn.addEventListener('click', () => {
@@ -81,17 +130,10 @@
       const reader = new FileReader();
       const extension = file.name.split('.').pop().toLowerCase();
 
-      reader.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const loaded = Math.round((e.loaded / e.total) * 30);
-          updateProgress(loaded, `Loading file (${Math.round((e.loaded/e.total)*100)}%)...`);
-        }
-      };
-
       reader.onload = async (e) => {
         try {
-          updateProgress(40, "Parsing 3D scene geometry...");
-          await new Promise(r => setTimeout(r, 100)); // Yield thread to UI
+          updateProgress(30, "Parsing 3D scene...");
+          await new Promise(r => setTimeout(r, 50));
 
           let targetObject;
 
@@ -105,26 +147,32 @@
             targetObject = loader.parse(text);
           }
 
-          updateProgress(70, "Applying Draco buffer compression...");
-          await new Promise(r => setTimeout(r, 100));
+          updateProgress(60, "Squeezing mesh vertices down...");
+          await new Promise(r => setTimeout(r, 50));
+
+          const ratio = parseFloat(reductionRatio.value);
+          await simplifyScene(targetObject, ratio);
+
+          updateProgress(85, "Rebuilding clean GLB file...");
+          await new Promise(r => setTimeout(r, 50));
 
           const exporter = new GLTFExporter();
           exporter.parse(
             targetObject,
             function (glb) {
-              updateProgress(100, "Complete! Downloading compressed GLB...");
+              updateProgress(100, "Complete! Downloading reduced GLB...");
               
               const blob = new Blob([glb], { type: 'application/octet-stream' });
               const link = document.createElement('a');
               link.href = URL.createObjectURL(blob);
-              link.download = file.name.replace(/\.[^/.]+$/, "") + "_compressed.glb";
+              link.download = file.name.replace(/\.[^/.]+$/, "") + "_shrunk.glb";
               link.click();
 
               setTimeout(() => {
                 progressContainer.style.display = 'none';
                 convertBtn.disabled = false;
                 const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
-                status.textContent = `Done! Output size: ${sizeMB} MB`;
+                status.textContent = `Done! File size down to: ${sizeMB} MB`;
               }, 1000);
             },
             function (error) {
@@ -132,12 +180,7 @@
               progressContainer.style.display = 'none';
               convertBtn.disabled = false;
             },
-            { 
-              binary: true,
-              dracoOptions: {
-                compressionLevel: 7
-              }
-            }
+            { binary: true }
           );
 
         } catch (err) {
