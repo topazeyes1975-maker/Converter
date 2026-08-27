@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GLB Fast Converter & Reliable Optimizer</title>
+  <title>Ultimate WebGL GLB Optimizer</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; background: #121212; color: #fff; text-align: center; margin: 0; }
-    .card { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 450px; margin: 20px auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+    .card { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 480px; margin: 20px auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
     input, button, select { margin: 10px 0; padding: 12px; width: 90%; font-size: 15px; border-radius: 4px; border: none; box-sizing: border-box; }
     select { background: #2a2a2a; color: #fff; border: 1px solid #444; }
     button { background: #007acc; color: white; font-weight: bold; cursor: pointer; }
@@ -25,9 +25,8 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-        "meshoptimizer": "https://unpkg.com/meshoptimizer@0.20.0/meshopt_simplifier.module.js"
+        "@gltf-transform/core": "https://cdn.jsdelivr.net/npm/@gltf-transform/core@3.10.1/+esm",
+        "@gltf-transform/functions": "https://cdn.jsdelivr.net/npm/@gltf-transform/functions@3.10.1/+esm"
       }
     }
   </script>
@@ -35,40 +34,35 @@
 <body>
 
   <div class="card">
-    <h2>GLB Fast Optimizer</h2>
+    <h2>Ultimate GLB Pipeline</h2>
     
-    <input type="file" id="fileInput" accept=".glb,.gltf,.obj">
+    <input type="file" id="fileInput" accept=".glb,.gltf">
     
     <div class="option-group">
-      <label for="reductionRatio">Target Mesh Density:</label>
-      <select id="reductionRatio">
-        <option value="0.3" selected>Target ~25 MB (Reduce to 30% detail)</option>
-        <option value="0.15">Aggressive (~10–15 MB / 15% detail)</option>
-        <option value="0.5">Moderate (~40 MB / 50% detail)</option>
+      <label for="preset">Optimization Preset:</label>
+      <select id="preset">
+        <option value="balanced" selected>Ultimate Balanced (Quantize + Weld + Prune)</option>
+        <option value="max">Max Compression (Aggressive Quantization)</option>
       </select>
     </div>
 
-    <button id="convertBtn">Optimize & Shrink GLB</button>
+    <button id="convertBtn">Run Full Pipeline & Export</button>
     
     <div id="progressContainer">
       <div class="spinner"></div>
       <div id="progressBar"><div id="progressFill"></div></div>
     </div>
     
-    <div id="status">Select a file to start</div>
+    <div id="status">Select a GLB file to start</div>
   </div>
 
   <script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-    import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-    import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-    import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
-    import { MeshoptSimplifier } from 'meshoptimizer';
+    import { WebIO } from '@gltf-transform/core';
+    import { weld, quantize, prune, dedup, resample } from '@gltf-transform/functions';
 
     const fileInput = document.getElementById('fileInput');
     const convertBtn = document.getElementById('convertBtn');
-    const reductionRatio = document.getElementById('reductionRatio');
+    const presetSelect = document.getElementById('preset');
     const status = document.getElementById('status');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
@@ -82,48 +76,7 @@
       }
     }
 
-    async function simplifyScene(scene, ratio) {
-      await MeshoptSimplifier.ready;
-      
-      scene.traverse((child) => {
-        if (child.isMesh && child.geometry) {
-          try {
-            // Clean up overlapping vertices first to prevent WebAssembly assertion errors
-            let geom = child.geometry.index ? child.geometry.toNonIndexed() : child.geometry.clone();
-            geom = BufferGeometryUtils.mergeVertices(geom);
-
-            const pos = geom.attributes.position.array;
-            const targetIndexCount = Math.floor((pos.length / 3) * ratio);
-
-            if (targetIndexCount > 100) {
-              const [resIndices] = MeshoptSimplifier.simplify(
-                pos,
-                targetIndexCount,
-                0.05 // Increased error threshold for maximum stability
-              );
-
-              const simplifiedGeom = new THREE.BufferGeometry();
-              simplifiedGeom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-              simplifiedGeom.setIndex(new THREE.BufferAttribute(resIndices, 1));
-              
-              if (geom.attributes.normal) {
-                simplifiedGeom.setAttribute('normal', geom.attributes.normal);
-              }
-              if (geom.attributes.uv) {
-                simplifiedGeom.setAttribute('uv', geom.attributes.uv);
-              }
-
-              child.geometry.dispose();
-              child.geometry = simplifiedGeom;
-            }
-          } catch (err) {
-            console.warn("Skipping un-simplifiable mesh node safely:", err);
-          }
-        }
-      });
-    }
-
-    convertBtn.addEventListener('click', () => {
+    convertBtn.addEventListener('click', async () => {
       const file = fileInput.files[0];
       if (!file) {
         status.textContent = "Please select a file first!";
@@ -132,72 +85,61 @@
 
       convertBtn.disabled = true;
       progressContainer.style.display = 'block';
-      updateProgress(10, "Reading file from disk...");
+      updateProgress(10, "Loading WebAssembly pipeline...");
 
-      const reader = new FileReader();
-      const extension = file.name.split('.').pop().toLowerCase();
+      try {
+        const io = new WebIO();
+        const arrayBuffer = await file.arrayBuffer();
+        
+        updateProgress(30, "Parsing 3D document structures...");
+        await new Promise(r => setTimeout(r, 50));
+        const doc = await io.readBinary(new Uint8Array(arrayBuffer));
 
-      reader.onload = async (e) => {
-        try {
-          updateProgress(30, "Parsing 3D scene...");
-          await new Promise(r => setTimeout(r, 100));
+        updateProgress(50, "Cleaning duplicate vertices & buffers...");
+        await new Promise(r => setTimeout(r, 50));
+        await doc.transform(
+          weld(),
+          dedup(),
+          prune()
+        );
 
-          let targetObject;
+        updateProgress(75, "Quantizing vertex data & attributes...");
+        await new Promise(r => setTimeout(r, 50));
+        
+        const isMax = presetSelect.value === 'max';
+        await doc.transform(
+          quantize({
+            quantizePosition: isMax ? 12 : 14,
+            quantizeNormal: isMax ? 8 : 10,
+            quantizeTexcoord: isMax ? 10 : 12
+          })
+        );
 
-          if (extension === 'glb' || extension === 'gltf') {
-            const loader = new GLTFLoader();
-            const gltf = await loader.parseAsync(e.target.result, '');
-            targetObject = gltf.scene;
-          } else if (extension === 'obj') {
-            const loader = new OBJLoader();
-            const text = new TextDecoder().decode(e.target.result);
-            targetObject = loader.parse(text);
-          }
+        updateProgress(90, "Packaging optimized GLB binary...");
+        await new Promise(r => setTimeout(r, 50));
+        const compressedGlb = await io.writeBinary(doc);
 
-          updateProgress(60, "Squeezing mesh vertices down...");
-          await new Promise(r => setTimeout(r, 100));
+        updateProgress(100, "Complete! Downloading file...");
+        
+        const blob = new Blob([compressedGlb], { type: 'application/octet-stream' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = file.name.replace(/\.[^/.]+$/, "") + "_ultimate.glb";
+        link.click();
 
-          const ratio = parseFloat(reductionRatio.value);
-          await simplifyScene(targetObject, ratio);
-
-          updateProgress(85, "Rebuilding clean GLB file...");
-          await new Promise(r => setTimeout(r, 100));
-
-          const exporter = new GLTFExporter();
-          exporter.parse(
-            targetObject,
-            function (glb) {
-              updateProgress(100, "Complete! Downloading reduced GLB...");
-              
-              const blob = new Blob([glb], { type: 'application/octet-stream' });
-              const link = document.createElement('a');
-              link.href = URL.createObjectURL(blob);
-              link.download = file.name.replace(/\.[^/.]+$/, "") + "_shrunk.glb";
-              link.click();
-
-              setTimeout(() => {
-                progressContainer.style.display = 'none';
-                convertBtn.disabled = false;
-                const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
-                status.textContent = `Done! File size down to: ${sizeMB} MB`;
-              }, 1000);
-            },
-            function (error) {
-              status.textContent = "Export failed: " + error;
-              progressContainer.style.display = 'none';
-              convertBtn.disabled = false;
-            },
-            { binary: true }
-          );
-
-        } catch (err) {
-          status.textContent = "Error: " + err.message;
+        setTimeout(() => {
           progressContainer.style.display = 'none';
           convertBtn.disabled = false;
-        }
-      };
+          const originalMB = (file.size / (1024 * 1024)).toFixed(2);
+          const newMB = (blob.size / (1024 * 1024)).toFixed(2);
+          status.textContent = `Done! Reduced from ${originalMB} MB down to ${newMB} MB`;
+        }, 1000);
 
-      reader.readAsArrayBuffer(file);
+      } catch (err) {
+        status.textContent = "Optimization Error: " + err.message;
+        progressContainer.style.display = 'none';
+        convertBtn.disabled = false;
+      }
     });
   </script>
 
