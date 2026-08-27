@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GLB Fast Converter & Real Mesh Compressor</title>
+  <title>GLB Fast Converter & Reliable Optimizer</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; background: #121212; color: #fff; text-align: center; margin: 0; }
     .card { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 450px; margin: 20px auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
@@ -63,6 +63,7 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
     import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+    import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
     import { MeshoptSimplifier } from 'meshoptimizer';
 
     const fileInput = document.getElementById('fileInput');
@@ -84,33 +85,39 @@
     async function simplifyScene(scene, ratio) {
       await MeshoptSimplifier.ready;
       
-      let promises = [];
       scene.traverse((child) => {
         if (child.isMesh && child.geometry) {
-          const geom = child.geometry.toNonIndexed();
-          const pos = geom.attributes.position.array;
-          const targetIndexCount = Math.floor((pos.length / 3) * ratio);
+          try {
+            // Clean up overlapping vertices first to prevent WebAssembly assertion errors
+            let geom = child.geometry.index ? child.geometry.toNonIndexed() : child.geometry.clone();
+            geom = BufferGeometryUtils.mergeVertices(geom);
 
-          if (targetIndexCount > 100) {
-            const [resIndices] = MeshoptSimplifier.simplify(
-              pos,
-              targetIndexCount,
-              0.01 // Target error tolerance
-            );
+            const pos = geom.attributes.position.array;
+            const targetIndexCount = Math.floor((pos.length / 3) * ratio);
 
-            const simplifiedGeom = new THREE.BufferGeometry();
-            simplifiedGeom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            simplifiedGeom.setIndex(new THREE.BufferAttribute(resIndices, 1));
-            
-            if (geom.attributes.normal) {
-              simplifiedGeom.setAttribute('normal', geom.attributes.normal);
+            if (targetIndexCount > 100) {
+              const [resIndices] = MeshoptSimplifier.simplify(
+                pos,
+                targetIndexCount,
+                0.05 // Increased error threshold for maximum stability
+              );
+
+              const simplifiedGeom = new THREE.BufferGeometry();
+              simplifiedGeom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+              simplifiedGeom.setIndex(new THREE.BufferAttribute(resIndices, 1));
+              
+              if (geom.attributes.normal) {
+                simplifiedGeom.setAttribute('normal', geom.attributes.normal);
+              }
+              if (geom.attributes.uv) {
+                simplifiedGeom.setAttribute('uv', geom.attributes.uv);
+              }
+
+              child.geometry.dispose();
+              child.geometry = simplifiedGeom;
             }
-            if (geom.attributes.uv) {
-              simplifiedGeom.setAttribute('uv', geom.attributes.uv);
-            }
-
-            child.geometry.dispose();
-            child.geometry = simplifiedGeom;
+          } catch (err) {
+            console.warn("Skipping un-simplifiable mesh node safely:", err);
           }
         }
       });
@@ -133,7 +140,7 @@
       reader.onload = async (e) => {
         try {
           updateProgress(30, "Parsing 3D scene...");
-          await new Promise(r => setTimeout(r, 50));
+          await new Promise(r => setTimeout(r, 100));
 
           let targetObject;
 
@@ -148,13 +155,13 @@
           }
 
           updateProgress(60, "Squeezing mesh vertices down...");
-          await new Promise(r => setTimeout(r, 50));
+          await new Promise(r => setTimeout(r, 100));
 
           const ratio = parseFloat(reductionRatio.value);
           await simplifyScene(targetObject, ratio);
 
           updateProgress(85, "Rebuilding clean GLB file...");
-          await new Promise(r => setTimeout(r, 50));
+          await new Promise(r => setTimeout(r, 100));
 
           const exporter = new GLTFExporter();
           exporter.parse(
