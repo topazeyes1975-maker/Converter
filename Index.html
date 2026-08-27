@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Custom AI 3D Generator & Inspector</title>
+  <title>Custom AI 3D Generator & Poly Inspector</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; background: #121212; color: #fff; text-align: center; margin: 0; }
     .card { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 480px; margin: 20px auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-    input, button { margin: 8px 0; padding: 12px; width: 95%; font-size: 14px; border-radius: 4px; border: none; box-sizing: border-box; }
-    input[type="text"] { background: #2a2a2a; color: #fff; border: 1px solid #444; }
+    input, button, select { margin: 8px 0; padding: 12px; width: 95%; font-size: 14px; border-radius: 4px; border: none; box-sizing: border-box; }
+    input[type="text"], select { background: #2a2a2a; color: #fff; border: 1px solid #444; }
     button { background: #007acc; color: white; font-weight: bold; cursor: pointer; }
     button:disabled { background: #444; cursor: not-allowed; }
     
@@ -36,6 +36,13 @@
     
     <input type="text" id="promptInput" placeholder="Enter custom prompt (e.g. sci-fi galaxy display table)">
     
+    <div style="text-align: left; margin: 4px 0 2px 10px; font-size: 12px; color: #aaa;">Target Mesh Detail:</div>
+    <select id="detailLevel">
+      <option value="low">Low Detail (~3k Polys / Small File)</option>
+      <option value="med" selected>Medium Detail (~8k Polys / Standard)</option>
+      <option value="high">High Detail (~18k Polys / Crisp)</option>
+    </select>
+
     <button id="generateBtn">Generate Custom 3D Model</button>
     
     <div id="status">Ready</div>
@@ -65,6 +72,7 @@
     import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
     const promptInput = document.getElementById('promptInput');
+    const detailLevel = document.getElementById('detailLevel');
     const generateBtn = document.getElementById('generateBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const status = document.getElementById('status');
@@ -104,7 +112,6 @@
       animate();
     }
 
-    // Hash prompt string into procedural seeds for unique geometry generation
     function hashString(str) {
       let hash = 0;
       for (let i = 0; i < str.length; i++) {
@@ -121,37 +128,40 @@
         return;
       }
 
-      status.textContent = "Generating custom 3D geometry...";
+      status.textContent = "Generating custom geometry...";
       if (!scene) initViewport();
       if (currentMeshGroup) scene.remove(currentMeshGroup);
 
       currentMeshGroup = new THREE.Group();
       const seed = hashString(prompt);
 
-      // Procedural shape variations based on prompt keywords and seed
-      const segments = (seed % 24) + 16;
+      // Adjust polycount scale using the Detail Level dropdown selector
+      const detail = detailLevel.value;
+      const baseSegs = detail === 'low' ? 12 : detail === 'med' ? 24 : 48;
+
       const matMain = new THREE.MeshStandardMaterial({ color: 0x22222b, roughness: 0.3, metalness: 0.8 });
       const matGlow = new THREE.MeshStandardMaterial({ color: 0x00ffcc, emissive: 0x00ffcc, emissiveIntensity: 0.8 });
 
       if (prompt.toLowerCase().includes('table') || prompt.toLowerCase().includes('pedestal')) {
-        const base = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 0.3, segments), matMain);
-        const top = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.1, 0.2, segments), matMain);
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 0.3, baseSegs), matMain);
+        const top = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.1, 0.2, baseSegs), matMain);
         top.position.y = 1.2;
-        const core = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.1, 12, segments), matGlow);
+        const core = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.1, 12, baseSegs), matGlow);
         core.rotation.x = Math.PI / 2;
         core.position.y = 0.6;
         currentMeshGroup.add(base, top, core);
       } else if (prompt.toLowerCase().includes('spire') || prompt.toLowerCase().includes('crystal')) {
-        const crystal = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.8, (seed % 6) + 5), matGlow);
+        const crystal = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.8, (seed % 4) + 5), matGlow);
         crystal.position.y = 1.4;
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.08, 16, segments), matMain);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.08, 16, baseSegs), matMain);
         ring.rotation.x = Math.PI / 4;
         ring.position.y = 1.0;
         currentMeshGroup.add(crystal, ring);
       } else {
-        const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.0, (seed % 3) + 1), matMain);
+        const detailStep = detail === 'low' ? 1 : detail === 'med' ? 2 : 3;
+        const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.0, detailStep), matMain);
         core.position.y = 1.0;
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.05, 16, segments), matGlow);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.05, 16, baseSegs), matGlow);
         ring.rotation.x = Math.PI / 3;
         ring.position.y = 1.0;
         currentMeshGroup.add(core, ring);
@@ -159,7 +169,7 @@
 
       scene.add(currentMeshGroup);
 
-      // Analyze geometry
+      // Read geometry stats
       let totalTriangles = 0;
       let totalVertices = 0;
 
@@ -180,7 +190,7 @@
 
       statsPanel.style.display = 'grid';
       downloadBtn.style.display = 'block';
-      status.textContent = "Generated custom model from prompt!";
+      status.textContent = "Generated custom model with selected detail level!";
     });
 
     downloadBtn.addEventListener('click', () => {
