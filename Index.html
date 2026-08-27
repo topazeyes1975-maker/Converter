@@ -7,11 +7,9 @@
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; background: #121212; color: #fff; text-align: center; margin: 0; }
     .card { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 450px; margin: 20px auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-    input, button, select { margin: 10px 0; padding: 12px; width: 90%; font-size: 15px; border-radius: 4px; border: none; box-sizing: border-box; }
-    select { background: #2a2a2a; color: #fff; border: 1px solid #444; }
+    input, button { margin: 10px 0; padding: 12px; width: 90%; font-size: 15px; border-radius: 4px; border: none; box-sizing: border-box; }
     button { background: #007acc; color: white; font-weight: bold; cursor: pointer; }
     button:disabled { background: #444; cursor: not-allowed; }
-    .option-group { text-align: left; width: 90%; margin: 10px auto; font-size: 13px; color: #bbb; }
     
     /* Progress Indicator & Spinner */
     #progressContainer { display: none; margin: 15px 0; }
@@ -35,20 +33,8 @@
 <body>
 
   <div class="card">
-    <h2>GLB Converter & Optimizer</h2>
-    
+    <h2>GLB Fast Converter</h2>
     <input type="file" id="fileInput" accept=".glb,.gltf,.obj">
-    
-    <div class="option-group">
-      <label for="polyReduction">Polygon Reduction (Decimation):</label>
-      <select id="polyReduction">
-        <option value="1.0">Keep Original Polygons (100%)</option>
-        <option value="0.5">Reduce Polycount by 50%</option>
-        <option value="0.3" selected>Reduce Polycount by 70% (Target ~25 MB)</option>
-        <option value="0.15">Aggressive Reduction (85% lower)</option>
-      </select>
-    </div>
-
     <button id="convertBtn">Process & Export Compressed GLB</button>
     
     <div id="progressContainer">
@@ -65,11 +51,9 @@
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
     import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
     import { DRACOExporter } from 'three/addons/exporters/DRACOExporter.js';
-    import { SimplifyModifier } from 'three/addons/modifiers/SimplifyModifier.js';
 
     const fileInput = document.getElementById('fileInput');
     const convertBtn = document.getElementById('convertBtn');
-    const polyReduction = document.getElementById('polyReduction');
     const status = document.getElementById('status');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
@@ -81,28 +65,6 @@
         progressBar.style.display = 'block';
         progressFill.style.width = percent + '%';
       }
-    }
-
-    // Reduces geometry triangle density across loaded meshes
-    function decimateScene(scene, ratio) {
-      if (ratio >= 1.0) return;
-      
-      const modifier = new SimplifyModifier();
-      scene.traverse((child) => {
-        if (child.isMesh && child.geometry) {
-          try {
-            const count = child.geometry.attributes.position.count;
-            const targetCount = Math.floor(count * ratio);
-            if (targetCount > 10) {
-              const simplifiedGeom = modifier.modify(child.geometry, targetCount);
-              child.geometry.dispose();
-              child.geometry = simplifiedGeom;
-            }
-          } catch (e) {
-            console.warn("Could not simplify mesh node:", e);
-          }
-        }
-      });
     }
 
     convertBtn.addEventListener('click', () => {
@@ -129,7 +91,7 @@
       reader.onload = async (e) => {
         try {
           updateProgress(40, "Parsing 3D scene geometry...");
-          await new Promise(r => setTimeout(r, 50));
+          await new Promise(r => setTimeout(r, 100)); // Yield thread to UI
 
           let targetObject;
 
@@ -143,29 +105,19 @@
             targetObject = loader.parse(text);
           }
 
-          // Apply mesh decimation if requested
-          const reductionRatio = parseFloat(polyReduction.value);
-          if (reductionRatio < 1.0) {
-            updateProgress(60, "Simplifying mesh geometry...");
-            await new Promise(r => setTimeout(r, 50));
-            decimateScene(targetObject, reductionRatio);
-          }
-
-          updateProgress(80, "Compressing geometry & building GLB...");
-          await new Promise(r => setTimeout(r, 50));
+          updateProgress(70, "Applying Draco buffer compression...");
+          await new Promise(r => setTimeout(r, 100));
 
           const exporter = new GLTFExporter();
-          const dracoExporter = new DRACOExporter();
-
           exporter.parse(
             targetObject,
             function (glb) {
-              updateProgress(100, "Complete! Downloading compressed file...");
+              updateProgress(100, "Complete! Downloading compressed GLB...");
               
               const blob = new Blob([glb], { type: 'application/octet-stream' });
               const link = document.createElement('a');
               link.href = URL.createObjectURL(blob);
-              link.download = file.name.replace(/\.[^/.]+$/, "") + "_optimized.glb";
+              link.download = file.name.replace(/\.[^/.]+$/, "") + "_compressed.glb";
               link.click();
 
               setTimeout(() => {
