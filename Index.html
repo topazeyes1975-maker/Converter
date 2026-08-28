@@ -252,7 +252,7 @@
       analysisPanel.style.display = "none";
 
       try {
-        const response = await fetch("https://shiny-glitter-2a52.topazeyes1975.workers.dev", {
+        const response = await fetch("https://shiny-glitter-2a52.topazeyes1975.workers.dev/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ prompt: prompt, targetPolys: targetPolyCount })
