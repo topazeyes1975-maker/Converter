@@ -152,16 +152,17 @@
       cursor: pointer;
     }
   </style>
+
   <!-- 1. Main Three.js Library MUST come first -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-<!-- 2. Loaders -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+  <!-- 2. Loaders & Exporters -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/OBJExporter.js"></script>
 
-<!-- 3. Geometry Utilities & Simplifier Modifier -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/modifiers/SimplifyModifier.js"></script>
-
+  <!-- 3. Geometry Utilities & Simplifier Modifier -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/modifiers/SimplifyModifier.js"></script>
 </head>
 <body>
 
@@ -171,7 +172,7 @@
     <div class="input-group">
       <label for="promptInput">Search / Prompt Model</label>
       <input type="text" id="promptInput" placeholder="e.g., table, chair, dragon">
- </div>
+    </div>
 
     <div class="input-group">
       <label>Target Polygon Count</label>
@@ -197,8 +198,8 @@
     </div>
   </div>
 
-    <script>
-    let scene, camera, renderer, currentMesh, rawObjText = "";
+  <script>
+    let scene, camera, renderer, currentMesh;
     let selectedPolyTier = 'med';
     let targetPolyCount = 15000;
 
@@ -272,30 +273,35 @@
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        const textDecoder = new TextDecoder();
-        rawObjText = textDecoder.decode(arrayBuffer);
 
         init3D();
 
-        const loader = new THREE.OBJLoader();
-        const obj = loader.parse(rawObjText);
+        const loader = new THREE.GLTFLoader();
+        loader.parse(arrayBuffer, '', function (gltf) {
+          const obj = gltf.scene;
 
-        // 1. Run decimation directly on the loaded OBJ mesh to cap poly count
-        decimateMesh(obj, targetPolyCount);
+          // 1. Decimate the mesh to cap poly count
+          decimateMesh(obj, targetPolyCount);
 
-        // 2. Center object inside viewer
-        const box = new THREE.Box3().setFromObject(obj);
-        const center = box.getCenter(new THREE.Vector3());
-        obj.position.sub(center);
+          // 2. Center object inside viewer
+          const box = new THREE.Box3().setFromObject(obj);
+          const center = box.getCenter(new THREE.Vector3());
+          obj.position.sub(center);
 
-        if (currentMesh) scene.remove(currentMesh);
-        currentMesh = obj;
-        scene.add(currentMesh);
+          if (currentMesh) scene.remove(currentMesh);
+          currentMesh = obj;
+          scene.add(currentMesh);
 
-        status.className = "success";
-        status.innerText = "Model generated & optimized successfully!";
-        
-        displaySuitability();
+          status.className = "success";
+          status.innerText = "Model generated & optimized successfully!";
+
+          displaySuitability();
+        }, function (error) {
+          console.error("GLTF Parse Error:", error);
+          status.className = "error";
+          status.innerText = "Error parsing 3D model geometry.";
+        });
+
       } catch (err) {
         console.error(err);
         status.className = "error";
@@ -313,7 +319,6 @@
         if (child.isMesh && child.geometry) {
           let geometry = child.geometry.clone();
           
-          // Ensure geometry has merged vertices for edge simplification
           if (THREE.BufferGeometryUtils && THREE.BufferGeometryUtils.mergeVertices) {
             geometry = THREE.BufferGeometryUtils.mergeVertices(geometry);
           }
@@ -354,14 +359,17 @@
     }
 
     function downloadOBJ() {
-      if (!rawObjText) return;
-      const blob = new Blob([rawObjText], { type: "text/plain" });
+      if (!currentMesh) return;
+      
+      const exporter = new THREE.OBJExporter();
+      const result = exporter.parse(currentMesh);
+      
+      const blob = new Blob([result], { type: "text/plain" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = `${document.getElementById("promptInput").value.trim() || 'model'}.obj`;
+      link.download = `${document.getElementById("promptInput").value.trim() || 'crushed-model'}.obj`;
       link.click();
     }
-    </script>
-  
+  </script>
 </body>
 </html>
