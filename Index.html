@@ -197,7 +197,7 @@
     </div>
   </div>
 
-  <script>
+    <script>
     let scene, camera, renderer, currentMesh, rawObjText = "";
     let selectedPolyTier = 'med';
     let targetPolyCount = 15000;
@@ -256,7 +256,7 @@
 
       btn.disabled = true;
       status.className = "";
-      status.innerText = `Generating ${selectedPolyTier.toUpperCase()} poly model...`;
+      status.innerText = `Generating & Optimizing ${selectedPolyTier.toUpperCase()} poly model...`;
       analysisPanel.style.display = "none";
 
       try {
@@ -280,6 +280,10 @@
         const loader = new THREE.OBJLoader();
         const obj = loader.parse(rawObjText);
 
+        // 1. Run decimation directly on the loaded OBJ mesh to cap poly count
+        decimateMesh(obj, targetPolyCount);
+
+        // 2. Center object inside viewer
         const box = new THREE.Box3().setFromObject(obj);
         const center = box.getCenter(new THREE.Vector3());
         obj.position.sub(center);
@@ -289,31 +293,7 @@
         scene.add(currentMesh);
 
         status.className = "success";
-        status.innerText = "Model generated successfully!";
-        function decimateMesh(mesh, targetTriangleCount) {
-  const simplifier = new THREE.SimplifierModifier();
-  
-  mesh.traverse((child) => {
-    if (child.isMesh && child.geometry) {
-      // Ensure geometry is indexed
-      let geometry = child.geometry;
-      if (!geometry.index) {
-        geometry = THREE.BufferGeometryUtils.mergeVertices(geometry);
-      }
-      
-      const currentTriangles = geometry.attributes.position.count / 3;
-      
-      // Only reduce if the model exceeds your target
-      if (currentTriangles > targetTriangleCount) {
-        const targetCount = Math.floor(targetTriangleCount);
-        const simplified = simplifier.modify(geometry, targetCount);
-        child.geometry.dispose(); // Free up memory
-        child.geometry = simplified;
-        console.log(`Crushed from ${currentTriangles} to ${targetCount} triangles.`);
-      }
-    }
-  });
-    }
+        status.innerText = "Model generated & optimized successfully!";
         
         displaySuitability();
       } catch (err) {
@@ -323,6 +303,32 @@
       } finally {
         btn.disabled = false;
       }
+    }
+
+    // Top-level Decimation Function
+    function decimateMesh(object, targetTriangleCount) {
+      const simplifier = new THREE.SimplifyModifier();
+      
+      object.traverse((child) => {
+        if (child.isMesh && child.geometry) {
+          let geometry = child.geometry.clone();
+          
+          // Ensure geometry has merged vertices for edge simplification
+          if (THREE.BufferGeometryUtils && THREE.BufferGeometryUtils.mergeVertices) {
+            geometry = THREE.BufferGeometryUtils.mergeVertices(geometry);
+          }
+          
+          const currentTriangles = geometry.attributes.position.count / 3;
+          
+          if (currentTriangles > targetTriangleCount) {
+            const countToRemove = Math.floor((currentTriangles - targetTriangleCount) * 3);
+            const simplified = simplifier.modify(geometry, countToRemove);
+            child.geometry.dispose();
+            child.geometry = simplified;
+            console.log(`Crushed from ${Math.floor(currentTriangles)} down to target triangle count.`);
+          }
+        }
+      });
     }
 
     function displaySuitability() {
@@ -355,6 +361,7 @@
       link.download = `${document.getElementById("promptInput").value.trim() || 'model'}.obj`;
       link.click();
     }
-  </script>
+    </script>
+  
 </body>
 </html>
