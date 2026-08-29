@@ -152,8 +152,16 @@
       cursor: pointer;
     }
   </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+  <!-- 1. Main Three.js Library MUST come first -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<!-- 2. Loaders -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+
+<!-- 3. Geometry Utilities & Simplifier Modifier -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/modifiers/SimplifyModifier.js"></script>
+
 </head>
 <body>
 
@@ -282,6 +290,30 @@
 
         status.className = "success";
         status.innerText = "Model generated successfully!";
+        function decimateMesh(mesh, targetTriangleCount) {
+  const simplifier = new THREE.SimplifierModifier();
+  
+  mesh.traverse((child) => {
+    if (child.isMesh && child.geometry) {
+      // Ensure geometry is indexed
+      let geometry = child.geometry;
+      if (!geometry.index) {
+        geometry = THREE.BufferGeometryUtils.mergeVertices(geometry);
+      }
+      
+      const currentTriangles = geometry.attributes.position.count / 3;
+      
+      // Only reduce if the model exceeds your target
+      if (currentTriangles > targetTriangleCount) {
+        const targetCount = Math.floor(targetTriangleCount);
+        const simplified = simplifier.modify(geometry, targetCount);
+        child.geometry.dispose(); // Free up memory
+        child.geometry = simplified;
+        console.log(`Crushed from ${currentTriangles} to ${targetCount} triangles.`);
+      }
+    }
+  });
+    }
         
         displaySuitability();
       } catch (err) {
