@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D GLTF/GLB Draco Compressor</title>
+    <title>Full 3D GLB Compressor (Geometry + Texture Resizer)</title>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -12,7 +12,6 @@
             --accent-hover: #0284c7;
             --text: #f8fafc;
             --muted: #94a3b8;
-            --success: #4ade80;
         }
 
         body {
@@ -37,18 +36,8 @@
             box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
         }
 
-        h1 {
-            font-size: 1.5rem;
-            margin-top: 0;
-            margin-bottom: 0.5rem;
-            color: var(--accent);
-        }
-
-        p {
-            color: var(--muted);
-            font-size: 0.9rem;
-            margin-bottom: 1.5rem;
-        }
+        h1 { font-size: 1.5rem; margin-top: 0; margin-bottom: 0.5rem; color: var(--accent); }
+        p { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
 
         .dropzone {
             border: 2px dashed #475569;
@@ -56,31 +45,15 @@
             padding: 2rem;
             text-align: center;
             cursor: pointer;
-            transition: border-color 0.2s, background-color 0.2s;
             margin-bottom: 1.5rem;
         }
 
-        .dropzone:hover, .dropzone.dragover {
-            border-color: var(--accent);
-            background-color: rgba(56, 189, 248, 0.05);
-        }
+        .dropzone:hover { border-color: var(--accent); background: rgba(56, 189, 248, 0.05); }
 
-        .controls {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
+        .controls { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; }
+        .control-group { display: flex; justify-content: space-between; align-items: center; }
 
-        .control-group {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        input[type="range"] {
-            width: 50%;
-        }
+        select, input[type="range"] { background: #0f172a; color: #fff; border: 1px solid #334155; padding: 0.4rem; border-radius: 4px; }
 
         button {
             background: var(--accent);
@@ -92,19 +65,9 @@
             cursor: pointer;
             width: 100%;
             font-size: 1rem;
-            transition: background-color 0.2s;
         }
 
-        button:hover {
-            background: var(--accent-hover);
-            color: #fff;
-        }
-
-        button:disabled {
-            background: #334155;
-            color: #64748b;
-            cursor: not-allowed;
-        }
+        button:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
 
         #log {
             background: #020617;
@@ -121,28 +84,35 @@
         }
     </style>
 
-    <!-- Three.js Library Stack -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/DRACOExporter.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
 </head>
 <body>
 
 <div class="container">
-    <h1>Robust 3D Draco Compressor</h1>
-    <p>Client-side quantization for GLTF and GLB models.</p>
+    <h1>Ultimate 3D GLB Compressor</h1>
+    <p>Resizes textures & compresses mesh geometry directly in the browser.</p>
 
     <div class="dropzone" id="dropzone">
-        <span id="dropzone-text">Drag & Drop .gltf or .glb file here, or click to select</span>
-        <input type="file" id="file-input" accept=".gltf,.glb" style="display: none;">
+        <span id="dropzone-text">Drag & Drop .glb file here, or click to select</span>
+        <input type="file" id="file-input" accept=".glb,.gltf" style="display: none;">
     </div>
 
     <div class="controls">
         <div class="control-group">
-            <label for="quantization">Quantization Bits (1=Max Compression, 16=Highest Detail):</label>
+            <label for="tex-max">Max Texture Size:</label>
+            <select id="tex-max">
+                <option value="1024" selected>1024 px (Recommended)</option>
+                <option value="512">512 px (Ultra Small)</option>
+                <option value="2048">2048 px (High Detail)</option>
+                <option value="0">Keep Original Size</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="quantization">Mesh Detail (Quantization):</label>
             <input type="range" id="quantization" min="1" max="16" value="11">
             <span id="quant-val">11</span>
         </div>
@@ -150,132 +120,144 @@
 
     <button id="process-btn" disabled>Compress & Download GLB</button>
 
-    <div id="log">Status: Ready. Upload a .glb or .gltf file to start.</div>
+    <div id="log">Status: Ready. Upload a .glb model.</div>
 </div>
 
 <script>
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('file-input');
     const processBtn = document.getElementById('process-btn');
-    const quantizationInput = document.getElementById('quantization');
+    const quantInput = document.getElementById('quantization');
     const quantVal = document.getElementById('quant-val');
+    const texMaxInput = document.getElementById('tex-max');
     const logDiv = document.getElementById('log');
 
     let loadedScene = null;
     let rawFileName = "model";
     let originalSizeBytes = 0;
 
-    quantizationInput.addEventListener('input', () => {
-        quantVal.textContent = quantizationInput.value;
-    });
-
+    quantInput.addEventListener('input', () => quantVal.textContent = quantInput.value);
     dropzone.addEventListener('click', () => fileInput.click());
-    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
-    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('dragover', (e) => e.preventDefault());
     dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
-        dropzone.classList.remove('dragover');
         if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
     });
-
     fileInput.addEventListener('change', (e) => {
         if (e.target.files.length) handleFile(e.target.files[0]);
     });
 
-    function log(msg, isError = false) {
-        const time = new Date().toLocaleTimeString();
-        logDiv.textContent += `\n[${time}] ${msg}`;
-        if (isError) logDiv.style.color = '#f87171';
+    function log(msg) {
+        logDiv.textContent += `\n[${new Date().toLocaleTimeString()}] ${msg}`;
         logDiv.scrollTop = logDiv.scrollHeight;
     }
 
     function handleFile(file) {
         rawFileName = file.name.substring(0, file.name.lastIndexOf('.'));
         originalSizeBytes = file.size;
-        
-        const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        document.getElementById('dropzone-text').textContent = `File: ${file.name} (${sizeMB} MB)`;
+        document.getElementById('dropzone-text').textContent = `File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
         
         log(`Loading ${file.name}...`);
-        
         const reader = new FileReader();
         reader.readAsArrayBuffer(file);
         reader.onload = function (e) {
-            const contents = e.target.result;
             const loader = new THREE.GLTFLoader();
-            
             const dracoLoader = new THREE.DRACOLoader();
             dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
             loader.setDRACOLoader(dracoLoader);
 
-            loader.parse(contents, '', (gltf) => {
+            loader.parse(e.target.result, '', (gltf) => {
                 loadedScene = gltf.scene;
-                
-                // Pre-process geometry attributes to prevent Draco export failures
-                let meshCount = 0;
-                loadedScene.traverse((child) => {
-                    if (child.isMesh) {
-                        meshCount++;
-                        if (!child.geometry.attributes.normal) {
-                            child.geometry.computeVertexNormals();
-                        }
-                    }
-                });
-
-                log(`Model loaded successfully! Found ${meshCount} mesh(es). Ready to compress.`);
+                log('Model loaded! Ready to resize textures & compress mesh.');
                 processBtn.disabled = false;
-            }, (err) => {
-                log(`Failed to parse model: ${err.message || err}`, true);
-            });
+            }, (err) => log(`Error: ${err.message}`));
         };
     }
 
-    processBtn.addEventListener('click', () => {
-        if (!loadedScene) return;
+    // Function to resize HTML Canvas Images
+    function resizeImage(image, maxDim) {
+        if (!maxDim || (image.width <= maxDim && image.height <= maxDim)) return image;
+        
+        const canvas = document.createElement('canvas');
+        let width = image.width;
+        let height = image.height;
 
+        if (width > height) {
+            if (width > maxDim) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+            }
+        } else {
+            if (height > maxDim) {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+            }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0, width, height);
+        return canvas;
+    }
+
+    processBtn.addEventListener('click', async () => {
+        if (!loadedScene) return;
         processBtn.disabled = true;
-        const quantBits = parseInt(quantizationInput.value);
-        log(`Compressing geometry with position quantization = ${quantBits} bits...`);
+
+        const maxTexSize = parseInt(texMaxInput.value);
+        const quantBits = parseInt(quantInput.value);
+
+        log(`Processing textures (Max dimension: ${maxTexSize ? maxTexSize + 'px' : 'Original'})...`);
+
+        // Iterate through all materials and scale down maps
+        const texturesToProcess = new Set();
+        loadedScene.traverse((child) => {
+            if (child.isMesh && child.material) {
+                const mat = child.material;
+                const maps = [mat.map, mat.normalMap, mat.roughnessMap, mat.metalnessMap, mat.aoMap, mat.emissiveMap];
+                maps.forEach(m => { if (m && m.image) texturesToProcess.add(m); });
+            }
+        });
+
+        let texCount = 0;
+        texturesToProcess.forEach((tex) => {
+            if (tex.image && maxTexSize > 0) {
+                const resizedCanvas = resizeImage(tex.image, maxTexSize);
+                tex.image = resizedCanvas;
+                tex.needsUpdate = true;
+                texCount++;
+            }
+        });
+
+        log(`Resized ${texCount} texture map(s). Exporting compressed GLB...`);
 
         const exporter = new THREE.GLTFExporter();
         const options = {
             binary: true,
+            maxTextureSize: maxTexSize || Infinity,
             dracoOptions: {
                 compressionLevel: 10,
-                quantizationVolume: 'mesh',
-                positionQuantization: quantBits,
-                normalQuantization: Math.min(quantBits, 10),
-                uvQuantization: Math.min(quantBits, 10)
+                positionQuantization: quantBits
             }
         };
 
-        try {
-            exporter.parse(loadedScene, function (glbArrayBuffer) {
-                const newSize = glbArrayBuffer.byteLength;
-                const reduction = (((originalSizeBytes - newSize) / originalSizeBytes) * 100).toFixed(1);
-                
-                const origMB = (originalSizeBytes / (1024 * 1024)).toFixed(2);
-                const newMB = (newSize / (1024 * 1024)).toFixed(2);
-
-                log(`SUCCESS! Size reduced from ${origMB} MB down to ${newMB} MB (${reduction}% smaller).`);
-                
-                saveArrayBuffer(glbArrayBuffer, `${rawFileName}_compressed_${quantBits}bit.glb`);
-                processBtn.disabled = false;
-            }, options);
-        } catch (err) {
-            log(`Compression error: ${err.message}`, true);
+        exporter.parse(loadedScene, (glbBuffer) => {
+            const newSize = glbBuffer.byteLength;
+            const reduction = (((originalSizeBytes - newSize) / originalSizeBytes) * 100).toFixed(1);
+            
+            log(`SUCCESS! File size reduced from ${(originalSizeBytes / 1024 / 1024).toFixed(2)} MB down to ${(newSize / 1024 / 1024).toFixed(2)} MB (${reduction}% smaller).`);
+            
+            const blob = new Blob([glbBuffer], { type: 'application/octet-stream' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `${rawFileName}_compressed.glb`;
+            link.click();
             processBtn.disabled = false;
-        }
+        }, options);
     });
-
-    function saveArrayBuffer(buffer, filename) {
-        const blob = new Blob([buffer], { type: 'application/octet-stream' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = filename;
-        link.click();
-    }
 </script>
 
 </body>
 </html>
+
