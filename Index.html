@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D GLTF/GLB Draco Compressor & Decompressor</title>
+    <title>3D GLTF/GLB Draco Compressor</title>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -12,6 +12,7 @@
             --accent-hover: #0284c7;
             --text: #f8fafc;
             --muted: #94a3b8;
+            --success: #4ade80;
         }
 
         body {
@@ -77,10 +78,6 @@
             align-items: center;
         }
 
-        label {
-            font-size: 0.9rem;
-        }
-
         input[type="range"] {
             width: 50%;
         }
@@ -116,14 +113,17 @@
             font-family: monospace;
             font-size: 0.85rem;
             color: #38bdf8;
-            max-height: 150px;
+            max-height: 180px;
             overflow-y: auto;
             white-space: pre-wrap;
             margin-top: 1rem;
+            border: 1px solid #334155;
         }
     </style>
-    <!-- Include Three.js & DRACO Exporter / Loader via CDN -->
+
+    <!-- Three.js Library Stack -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/DRACOExporter.js"></script>
@@ -132,8 +132,8 @@
 <body>
 
 <div class="container">
-    <h1>3D Model Draco Compressor</h1>
-    <p>Convert and compress 3D meshes using client-side WebAssembly Draco encoding.</p>
+    <h1>Robust 3D Draco Compressor</h1>
+    <p>Client-side quantization for GLTF and GLB models.</p>
 
     <div class="dropzone" id="dropzone">
         <span id="dropzone-text">Drag & Drop .gltf or .glb file here, or click to select</span>
@@ -142,22 +142,15 @@
 
     <div class="controls">
         <div class="control-group">
-            <label for="quantization">Quantization Level (1-16):</label>
+            <label for="quantization">Quantization Bits (1=Max Compression, 16=Highest Detail):</label>
             <input type="range" id="quantization" min="1" max="16" value="11">
             <span id="quant-val">11</span>
         </div>
-        <div class="control-group">
-            <label for="export-type">Export Format:</label>
-            <select id="export-type" style="padding: 0.3rem; border-radius: 4px; background: #0f172a; color: #fff; border: 1px solid #334155;">
-                <option value="glb">GLB with Draco Compression</option>
-                <option value="drc">Standalone Draco Geometry (.drc)</option>
-            </select>
-        </div>
     </div>
 
-    <button id="process-btn" disabled>Compress & Download</button>
+    <button id="process-btn" disabled>Compress & Download GLB</button>
 
-    <div id="log">Status: Ready. Upload a model to begin.</div>
+    <div id="log">Status: Ready. Upload a .glb or .gltf file to start.</div>
 </div>
 
 <script>
@@ -166,49 +159,42 @@
     const processBtn = document.getElementById('process-btn');
     const quantizationInput = document.getElementById('quantization');
     const quantVal = document.getElementById('quant-val');
-    const exportType = document.getElementById('export-type');
     const logDiv = document.getElementById('log');
 
-    let loadedModel = null;
-    let fileName = "model";
+    let loadedScene = null;
+    let rawFileName = "model";
+    let originalSizeBytes = 0;
 
     quantizationInput.addEventListener('input', () => {
         quantVal.textContent = quantizationInput.value;
     });
 
     dropzone.addEventListener('click', () => fileInput.click());
-
-    dropzone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropzone.classList.add('dragover');
-    });
-
-    dropzone.addEventListener('dragleave', () => {
-        dropzone.classList.remove('dragover');
-    });
-
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
     dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropzone.classList.remove('dragover');
-        if (e.dataTransfer.files.length) {
-            handleFile(e.dataTransfer.files[0]);
-        }
+        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
     });
 
     fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length) {
-            handleFile(e.target.files[0]);
-        }
+        if (e.target.files.length) handleFile(e.target.files[0]);
     });
 
-    function log(msg) {
-        logDiv.textContent += `\n${msg}`;
+    function log(msg, isError = false) {
+        const time = new Date().toLocaleTimeString();
+        logDiv.textContent += `\n[${time}] ${msg}`;
+        if (isError) logDiv.style.color = '#f87171';
         logDiv.scrollTop = logDiv.scrollHeight;
     }
 
     function handleFile(file) {
-        fileName = file.name.substring(0, file.name.lastIndexOf('.'));
-        document.getElementById('dropzone-text').textContent = `Selected: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+        rawFileName = file.name.substring(0, file.name.lastIndexOf('.'));
+        originalSizeBytes = file.size;
+        
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        document.getElementById('dropzone-text').textContent = `File: ${file.name} (${sizeMB} MB)`;
         
         log(`Loading ${file.name}...`);
         
@@ -218,68 +204,67 @@
             const contents = e.target.result;
             const loader = new THREE.GLTFLoader();
             
-            // Set up Draco Decoder in case input model is already Draco compressed
             const dracoLoader = new THREE.DRACOLoader();
             dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
             loader.setDRACOLoader(dracoLoader);
 
             loader.parse(contents, '', (gltf) => {
-                loadedModel = gltf.scene;
-                log('Model loaded successfully! Ready for compression.');
+                loadedScene = gltf.scene;
+                
+                // Pre-process geometry attributes to prevent Draco export failures
+                let meshCount = 0;
+                loadedScene.traverse((child) => {
+                    if (child.isMesh) {
+                        meshCount++;
+                        if (!child.geometry.attributes.normal) {
+                            child.geometry.computeVertexNormals();
+                        }
+                    }
+                });
+
+                log(`Model loaded successfully! Found ${meshCount} mesh(es). Ready to compress.`);
                 processBtn.disabled = false;
             }, (err) => {
-                log(`Error parsing model: ${err.message}`);
+                log(`Failed to parse model: ${err.message || err}`, true);
             });
         };
     }
 
     processBtn.addEventListener('click', () => {
-        if (!loadedModel) return;
+        if (!loadedScene) return;
 
-        const format = exportType.value;
+        processBtn.disabled = true;
         const quantBits = parseInt(quantizationInput.value);
-        log(`Starting compression using quantization bits: ${quantBits}...`);
+        log(`Compressing geometry with position quantization = ${quantBits} bits...`);
 
-        if (format === 'drc') {
-            // Compress first mesh using raw DRACOExporter
-            let targetMesh = null;
-            loadedModel.traverse((child) => {
-                if (child.isMesh && !targetMesh) targetMesh = child;
-            });
-
-            if (!targetMesh) {
-                log("Error: No valid Mesh found in model to compress to .drc");
-                return;
+        const exporter = new THREE.GLTFExporter();
+        const options = {
+            binary: true,
+            dracoOptions: {
+                compressionLevel: 10,
+                quantizationVolume: 'mesh',
+                positionQuantization: quantBits,
+                normalQuantization: Math.min(quantBits, 10),
+                uvQuantization: Math.min(quantBits, 10)
             }
+        };
 
-            const exporter = new THREE.DRACOExporter();
-            const options = {
-                compressionLevel: 7,
-                quantization: [quantBits, quantBits, quantBits, quantBits, quantBits]
-            };
+        try {
+            exporter.parse(loadedScene, function (glbArrayBuffer) {
+                const newSize = glbArrayBuffer.byteLength;
+                const reduction = (((originalSizeBytes - newSize) / originalSizeBytes) * 100).toFixed(1);
+                
+                const origMB = (originalSizeBytes / (1024 * 1024)).toFixed(2);
+                const newMB = (newSize / (1024 * 1024)).toFixed(2);
 
-            const result = exporter.parse(targetMesh, options);
-            saveArrayBuffer(result, `${fileName}_compressed.drc`);
-            log(`Compression complete! Downloade: ${fileName}_compressed.drc`);
-
-        } else {
-            // Export GLB with Draco Mesh Compression Options
-            const exporter = new THREE.GLTFExporter();
-            const options = {
-                binary: true,
-                dracoOptions: {
-                    compressionLevel: 7,
-                    quantizationVolume: 'mesh',
-                    positionQuantization: quantBits,
-                    normalQuantization: quantBits,
-                    uvQuantization: quantBits
-                }
-            };
-
-            exporter.parse(loadedModel, function (gltf) {
-                saveArrayBuffer(gltf, `${fileName}_compressed.glb`);
-                log(`GLB Draco compression complete! Downloaded: ${fileName}_compressed.glb`);
+                log(`SUCCESS! Size reduced from ${origMB} MB down to ${newMB} MB (${reduction}% smaller).`);
+                
+                saveArrayBuffer(glbArrayBuffer, `${rawFileName}_compressed_${quantBits}bit.glb`);
+                processBtn.disabled = false;
             }, options);
+        } catch (err) {
+            log(`Compression error: ${err.message}`, true);
+            processBtn.disabled = false;
         }
     });
 
